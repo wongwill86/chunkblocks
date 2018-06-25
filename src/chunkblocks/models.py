@@ -148,40 +148,72 @@ class Chunk(object):
 
 
 class Block(object):
-    def __init__(self, bounds, chunk_shape, overlap=None, base_iterator=None):
-        self.bounds = bounds
-        self.chunk_shape = chunk_shape
 
+    def __init__(self, bounds=None, offset=None, num_chunks=None, chunk_shape=None, overlap=None, base_iterator=None):
+        """
+        Create a block which is used to addres chunks. Must specify either bounds or (offset and num_chunks) to
+        determine the size of the dataset.
+        """
         if not overlap:
             overlap = tuple([0] * len(chunk_shape))
 
         self.overlap = overlap
+
+        self.chunk_shape = chunk_shape
+
         if not base_iterator:
             base_iterator = UnitBFSIterator()
         self.base_iterator = base_iterator
 
-        self.shape = tuple(b.stop - b.start for b in self.bounds)
-        self.stride = tuple((c_shape - olap) for c_shape, olap in zip(self.chunk_shape, self.overlap))
-        self.num_chunks = tuple((shp - olap) // s for shp, olap, s in zip(
-            self.shape, self.overlap, self.stride))
+        self.strides = tuple((c_shape - olap) for c_shape, olap in zip(self.chunk_shape, self.overlap))
 
-        self.verify_size()
+        contains_bounds = bounds is not None
+        contains_offset = offset is not None and num_chunks is not None
+
+        if not contains_bounds and not contains_offset:
+            raise ValueError('Either bounds or offset/num_chunks must be specified')
+
+        if contains_bounds:
+            self.offset = tuple(s.start for s in bounds)
+            self.bounds = bounds
+            self.shape = tuple(b.stop - b.start for b in self.bounds)
+            self.num_chunks = tuple((shp - olap) // s for shp, olap, s in zip(
+                self.shape, self.overlap, self.strides))
+
+        if contains_offset:
+            bounds = tuple(slice(o, o + chks * st + olap) for o, chks, st, olap in zip(
+                offset, num_chunks, self.strides, self.overlap))
+            shape = tuple(chunks * st + olap for chunks, st, olap in zip(num_chunks, self.strides, self.overlap))
+
+            if contains_bounds:
+                assert self.bounds == bounds, "Received both bounds and offset/num_chunks that do not match"
+                assert self.shape == shape, "Received both bounds and offset/num_chunks that do not match"
+                assert self.num_chunks == num_chunks, "Received both bounds and offset/num_chunks that do not match"
+            else:
+                self.offset = offset
+                self.bounds = bounds
+                self.shape = shape
+                self.num_chunks = num_chunks
+
+        self.bounds = bounds
+        Block.verify_size(self.num_chunks, self.chunk_shape, self.shape, self.overlap)
 
         self.checkpoints = set()
         self.unit_index_to_chunk = partial(Chunk, self)
 
     def unit_index_to_slices(self, index):
         return tuple(slice(b.start + idx * s, b.start + idx * s + c_shape) for b, idx, s, c_shape in zip(
-            self.bounds, index, self.stride, self.chunk_shape))
+            self.bounds, index, self.strides, self.chunk_shape))
 
     def slices_to_unit_index(self, slices):
-        return tuple((slice.start - b.start) // s for b, s, slice in zip(self.bounds, self.stride, slices))
+        return tuple((slice.start - b.start) // s for b, s, slice in zip(self.bounds, self.strides, slices))
 
-    def verify_size(self):
-        for chunks, c_shape, shp, olap in zip(self.num_chunks, self.chunk_shape, self.shape, self.overlap):
+    @staticmethod
+    def verify_size(num_chunks, chunk_shape, shape, overlap):
+        for chunks, c_shape, shp, olap in zip(num_chunks, chunk_shape, shape, overlap):
             if chunks * (c_shape - olap) + olap != shp:
                 raise ValueError('Data size %s divided by %s with overlap %s does not divide evenly' % (
-                    self.shape, self.chunk_shape, self.overlap))
+                    shape, chunk_shape, overlap))
 
     def checkpoint(self, chunk):
         self.checkpoints.add(chunk.unit_index)

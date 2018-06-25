@@ -62,6 +62,39 @@ class TestBlock:
         with pytest.raises(ValueError):
             Block(bounds=bounds, chunk_shape=chunk_shape)
 
+    def test_init(self):
+        bounds = (slice(0, 70), slice(0, 70))
+        offset = (0, 0)
+        num_chunks = (3, 3)
+        overlap = (10, 10)
+        chunk_shape = (30, 30)
+
+        # test with bounds
+        Block(bounds=bounds, chunk_shape=chunk_shape, overlap=overlap)
+
+        # test with offset/num_chunks
+        Block(offset=offset, num_chunks=num_chunks, chunk_shape=chunk_shape, overlap=overlap)
+
+        # test with both offset/num_chunks
+        Block(bounds=bounds, offset=offset, num_chunks=num_chunks, chunk_shape=chunk_shape, overlap=overlap)
+
+        # test fail with neither block and offset offset/num_chunks
+        with pytest.raises(ValueError):
+            Block(chunk_shape=chunk_shape, overlap=overlap)
+
+        # test fail with only offset no num_chunks
+        with pytest.raises(ValueError):
+            Block(offset=offset, chunk_shape=chunk_shape, overlap=overlap)
+
+        # test fail with only num_chuks no offset
+        with pytest.raises(ValueError):
+            Block(num_chunks=num_chunks, chunk_shape=chunk_shape, overlap=overlap)
+
+        # test incorrect matching bounds with offset/num_chunks
+        with pytest.raises(Exception):
+            Block(bounds=(slice(b.start, b.stop + 1) for b in bounds),
+                  offset=offset, num_chunks=num_chunks, chunk_shape=chunk_shape, overlap=overlap)
+
     def test_init_wrong_size_overlap(self):
         bounds = (slice(0, 70), slice(0, 70))
         chunk_shape = (30, 30)

@@ -27,7 +27,7 @@ project = u'chunkblocks'
 year = '2018'
 author = u'Will Wong'
 copyright = '{0}, {1}'.format(year, author)
-version = release = u'version = release = '0.1.2''
+version = release = u'version = release = '0.1.3''
 
 pygments_style = 'trac'
 templates_path = ['.']

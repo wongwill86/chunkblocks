@@ -108,15 +108,16 @@ class Chunk(object):
 
         return tuple(core_slices)
 
-    def border_slices(self, borders=None):
+    def border_slices(self, borders=None, overlapping=False):
         """
-        Returns a list of non-intersecting slices that cover the requested borders. Borders is a list of tuples:
-            (dimension index of border, border direction)
+        Returns a list of slices that cover the requested borders.
 
+        :param borders: list of tuples indicating (dimension index of border, border direction)
         When no borders are given, return all borders.
-
         Border direction is specified by -1 to represent the border in the negative index direction and +1 for the
         positive index direction.
+        :param overlapping: if set to False, will return slices that will account for each index only *once*. if set to
+        True, will indescriminately return the largest slices that will include the corners and edges more than once.
         """
         if borders is None:
             borders = self.all_borders
@@ -140,7 +141,8 @@ class Chunk(object):
                 self.slices[idx]
                 for idx in range(0, len(self.slices))
             )
-            remainders[border] = sub(remainders[border], new_slices[border])
+            if not overlapping:
+                remainders[border] = sub(remainders[border], new_slices[border])
             border_slices.append(new_slices)
             processed_dimensions.add(border)
 

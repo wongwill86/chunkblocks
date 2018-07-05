@@ -53,6 +53,32 @@ class TestChunk:
         fake_data[chunk.core_slices(borders)] += 1
         assert fake_data.sum() == np.product(fake_data.shape)
 
+    def test_get_border_slices_3d_overlapping(self):
+        bounds = (slice(0, 7), slice(0, 7), slice(0, 7))
+        chunk_shape = (3, 3, 3)
+        overlap = (1, 1, 1)
+
+        block = Block(bounds=bounds, chunk_shape=chunk_shape, overlap=overlap)
+
+        chunk = Chunk(block, (0, 0, 0))
+
+        borders = list(itertools.product(range(0, len(bounds)), [-1, 1]))
+
+        fake_data = np.zeros(chunk.shape)
+        for slices in chunk.border_slices(borders, overlapping=True):
+            fake_data[slices] += 1
+
+        fake_data[chunk.core_slices(borders)] += 1
+        assert np.array_equal(fake_data, [[[3, 2, 3],
+                                           [2, 1, 2],
+                                           [3, 2, 3]],
+                                          [[2, 1, 2],
+                                           [1, 1, 1],
+                                           [2, 1, 2]],
+                                          [[3, 2, 3],
+                                           [2, 1, 2],
+                                           [3, 2, 3]]])
+
 
 class TestBlock:
     def test_init_wrong_size_no_overlap(self):

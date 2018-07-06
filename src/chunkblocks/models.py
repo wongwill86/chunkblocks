@@ -32,7 +32,7 @@ class Chunk(object):
     def __init__(self, block, unit_index):
         self.unit_index = unit_index
         self.slices = block.unit_index_to_slices(unit_index)
-        self.global_offset = [s.start for s in self.slices]
+        self.offset = [s.start for s in self.slices]
         self.data = None
         self.shape = block.chunk_shape
         self.overlap = block.overlap
@@ -108,7 +108,7 @@ class Chunk(object):
 
         return tuple(core_slices)
 
-    def border_slices(self, borders=None, overlapping=False):
+    def border_slices(self, borders=None, nonintersecting=True):
         """
         Returns a list of slices that cover the requested borders.
 
@@ -116,7 +116,7 @@ class Chunk(object):
         When no borders are given, return all borders.
         Border direction is specified by -1 to represent the border in the negative index direction and +1 for the
         positive index direction.
-        :param overlapping: if set to False, will return slices that will account for each index only *once*. if set to
+        :param nonintersecting: if set to False, will return slices that will account for each index only *once*. if set to
         True, will indescriminately return the largest slices that will include the corners and edges more than once.
         """
         if borders is None:
@@ -141,7 +141,7 @@ class Chunk(object):
                 self.slices[idx]
                 for idx in range(0, len(self.slices))
             )
-            if not overlapping:
+            if nonintersecting:
                 remainders[border] = sub(remainders[border], new_slices[border])
             border_slices.append(new_slices)
             processed_dimensions.add(border)

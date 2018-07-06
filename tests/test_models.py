@@ -65,7 +65,7 @@ class TestChunk:
         borders = list(itertools.product(range(0, len(bounds)), [-1, 1]))
 
         fake_data = np.zeros(chunk.shape)
-        for slices in chunk.border_slices(borders, overlapping=True):
+        for slices in chunk.border_slices(borders, nonintersecting=False):
             fake_data[slices] += 1
 
         fake_data[chunk.core_slices(borders)] += 1

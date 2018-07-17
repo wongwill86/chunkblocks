@@ -12,7 +12,7 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
     supported (i.e. used for printing out)
 
     See below link for explanations of __new__ and __array_finalize__!
-    https://docs.scipy.org/doc/numpy-dev/user/basics.subclassing.html#slightly-more-realistic-example-attribute-added-to-existing-array
+    https://docs.scipy.org/doc/numpy/user/basics.subclassing.html#slightly-more-realistic-example-attribute-added-to-existing-array
     """# noqa
     _HANDLED_TYPES = (np.ndarray, numbers.Number)
 

@@ -37,6 +37,16 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
             return
         self.global_offset = getattr(obj, 'global_offset', None)
 
+    def __reduce__(self):
+        reduction = super().__reduce__()
+        object_state = reduction[2]
+        object_state += (self.global_offset,)
+        return tuple(object_state if index is 2 else r for index, r in enumerate(reduction))
+
+    def __setstate__(self, state):
+        self.global_offset = state[-1]
+        super().__setstate__(state[:-1])
+
     def _to_internal_slices(self, index):
         """
         Convert given index into the index used in the internal ndarray. Does NOT support end slicing and wrap around

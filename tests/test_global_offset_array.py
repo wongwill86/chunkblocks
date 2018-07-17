@@ -1,4 +1,5 @@
 import operator
+import pickle
 from math import factorial, floor
 
 import numpy as np
@@ -524,3 +525,16 @@ class TestGlobalOffsetArray:
         global_offset_data = GlobalOffsetArray(data, global_offset=(3, 2, 1, 0))
         assert np.array_equal(global_offset_data[5], data[2])
         assert np.array_equal(global_offset_data[5, 3], data[2, 1])
+
+    def test_pickle(self):
+        dimensions = (4, 3, 2, 1)
+        data = np.arange(0, np.product(dimensions)).reshape(dimensions)
+        global_offset = (3, 2, 1, 0)
+        global_offset_data = GlobalOffsetArray(data, global_offset=global_offset)
+
+        pickled = pickle.dumps(global_offset_data)
+        unpickled = pickle.loads(pickled)
+
+        assert global_offset_data.data is not unpickled
+        assert global_offset == unpickled.global_offset
+        assert np.array_equal(global_offset_data.data, unpickled.data)

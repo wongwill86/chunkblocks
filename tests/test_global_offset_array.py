@@ -142,32 +142,56 @@ class TestGlobalOffsetArray:
 
     def test_bounds(self):
         """
-        Make sure error is thrown when trying to access out of bounds
+        Tests to make sure get index is has compatible behavior as the regular numpy array
 
         """
         original = np.arange(5 ** 4).reshape(tuple([5] * 4))
         global_offset = (100, 200, 300, 400)
-        offset_array = GlobalOffsetArray(original)
 
-        with pytest.raises(IndexError):
-            offset_array[5:6, 4:5, 6:7, 7:8]
-
-        with pytest.raises(IndexError):
-            offset_array[2, 2:5, 6:8, 0:2]
-
-        with pytest.raises(IndexError):
-            offset_array[2, 9, 0:3, 0:2]
-
+        no_offset_array = GlobalOffsetArray(original)
         offset_array = GlobalOffsetArray(original, global_offset=global_offset)
 
-        with pytest.raises(IndexError):
-            offset_array[105:106, 204:205, 306:307, 407:408]
+        slices_tests = [
+            # pre indexed sub slicing
+            (slice(-5, 2), slice(0, 5), slice(0, 5), slice(0, 5)),
+            # post indexed sub slicing
+            (slice(3, 8), slice(0, 5), slice(0, 5), slice(0, 5)),
+            # pre and post indexed mixed sub slicing
+            (slice(-5, 2), slice(3, 8), slice(4, 7), slice(2, 8)),
+            # pre to post sub slicing
+            (slice(-2, 8), slice(0, 5), slice(0, 5), slice(0, 5)),
+            # completely outside bounding box
+            (slice(5, 6), slice(4, 5), slice(4, 7), slice(7, 8)),
+            # single addressed index
+            (2, slice(2, 5), slice(6, 8), slice(0, 2)),
+            # single addressed index out of bounds
+            (8, slice(2, 5), slice(6, 8), slice(0, 2)),
+            # two addressed index but one is out of bounds
+            (2, 9, slice(0, 3), slice(0, 2)),
+        ]
+        offset_slices_tests = [
+            tuple(
+                slice(s.start + o, s.stop + o) if isinstance(s, slice) else s + o
+                for s, o in zip(slices, global_offset)
+            ) for slices in slices_tests
+        ]
 
-        with pytest.raises(IndexError):
-            offset_array[102, 202:205, 306:308, 400:402]
+        for slices, offset_slices in zip(slices_tests, offset_slices_tests):
+            expected_exception = None
+            expected_value = None
+            try:
+                expected_value = original[slices]
+            except Exception as e:
+                expected_exception = e
 
-        with pytest.raises(IndexError):
-            offset_array[102, 209, 300:303, 400:402]
+            if expected_exception is not None:
+                with pytest.raises(type(expected_exception)):
+                    no_offset_array[slices]
+                with pytest.raises(type(expected_exception)):
+                    offset_array[offset_slices]
+            else:
+                assert np.array_equal(expected_value, no_offset_array[slices])
+                assert np.array_equal(expected_value, offset_array[offset_slices])
 
     def test_subarray(self):
         """

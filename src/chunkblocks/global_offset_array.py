@@ -52,7 +52,6 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
         Convert given index into the index used in the internal ndarray. Does NOT support end slicing and wrap around
         negative indices. Throw an error if computed internal indices are outside the range of the data.
         """
-        shape = self.shape
         internal_index = ()
         new_global_offsets = ()
 
@@ -78,20 +77,14 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
                     stop = offset + length
                 new_item = slice(start - offset, stop - offset, item.step)
                 new_global_offsets += (new_item.start + offset,)
-
-                if (new_item.start < 0 or new_item.start >= length or new_item.stop < 1 or new_item.stop > length):
-                    raise IndexError('Accessing slice [%s, %s) at dimension %s out of data bounds [%s, %s) '
-                                     'shape: %s global_offset: %s ' % (
-                                         new_item.start + offset, new_item.stop + offset, dimension,
-                                         offset, offset + length, shape, self.global_offset))
             else:
                 new_item = item - offset
                 # don't need to keep track of global offset for collapsed index
 
                 if new_item < 0 or new_item > length:
-                    raise IndexError('Accessing index %s at dimension %s out of data bounds [%s , %s) '
-                                     'shape: %s global_offset: %s ' % (
-                                         new_item, dimension, offset, offset + length, shape, self.global_offset))
+                    raise IndexError('index %s is out of bounds for axis %s with bounds [%s , %s) '
+                                     'requested: %s bounds: %s' % (
+                                         new_item, dimension, offset, offset + length, index, self.bounds()))
 
             internal_index += (new_item,)
         return (internal_index, new_global_offsets)

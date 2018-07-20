@@ -9,7 +9,7 @@ OUT = 'out'
 class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
     """
     A simple VIEW CAST of a given ndarray that is addressed via global coordinates. Negative wraparound indices are NOT
-    supported (i.e. used for printing out)
+    supported (i.e. used for printing out) and will IGNORE indices out of bounds
 
     See below link for explanations of __new__ and __array_finalize__!
     https://docs.scipy.org/doc/numpy/user/basics.subclassing.html#slightly-more-realistic-example-attribute-added-to-existing-array
@@ -75,14 +75,18 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
                     start = offset
                 if stop is None:
                     stop = offset + length
-                new_item = slice(start - offset, stop - offset, item.step)
+
+                slice_start = start - offset
+                slice_stop = stop - offset
+
+                new_item = slice(slice_start if slice_start > 0 else 0, slice_stop if slice_stop > 0 else 0, item.step)
                 new_global_offsets += (new_item.start + offset,)
             else:
                 new_item = item - offset
                 # don't need to keep track of global offset for collapsed index
 
                 if new_item < 0 or new_item > length:
-                    raise IndexError('index %s is out of bounds for axis %s with bounds [%s , %s) '
+                    raise IndexError('Index %s is out of bounds for axis %s with bounds [%s , %s) '
                                      'requested: %s bounds: %s' % (
                                          new_item, dimension, offset, offset + length, index, self.bounds()))
 
@@ -153,6 +157,13 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
         Enable injection of customized indexing for ufunc operations
         Must defer to the implementation of the ufunc on unwrapped values to avoid infinite loop
         https://docs.scipy.org/doc/numpy-1.14.0/reference/generated/numpy.lib.mixins.NDArrayOperatorsMixin.html
+
+        Standard operators work normally when:
+            * global offset and size are the same for both operands
+            * one oeprand is fully encapsulated by another (returns a copy of the larger with the smaller added)
+
+        In-place operators work normally when:
+            *
         """
         in_place = OUT in kwargs
         for x in inputs + kwargs.get(OUT, ()):
@@ -163,7 +174,7 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
                 return NotImplemented
 
         # global offset to use in the result
-        global_offset = None
+        result = global_offset = None
         if len(inputs) == 2:
             left = inputs[0]
             right = inputs[1]
@@ -174,10 +185,6 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
                 smaller = larger = None
                 left_in_right = left.is_contained_within(right)
                 right_in_left = right.is_contained_within(left)
-
-                if not left_in_right and not right_in_left:
-                    raise ValueError("Incorrect overlapping indices. Left bounds: %s, Right bounds: %s" % (
-                        left.bounds(), right.bounds()))
 
                 if left_in_right and right_in_left:
                     # same bounds/size
@@ -193,21 +200,26 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
                     sub_kwargs = {}
 
                     if in_place:
-                        if left is smaller:
-                            raise ValueError("In-place operation must have Left (shape: %s) larger or equal than Right"
-                                             " (shape: %s)" % (left.shape, right.shape))
-                        sub_kwargs[OUT] = tuple(o[smaller.bounds()] for o in kwargs[OUT])
-                        getattr(ufunc, method)(*sub_inputs, **sub_kwargs)
-                        return kwargs[OUT]
+                        # only perform op if there are values to operate on
+                        if len(sub_left) and len(sub_right):
+                            sub_kwargs[OUT] = tuple(o[right.bounds()] for o in kwargs[OUT])
+                            getattr(ufunc, method)(*sub_inputs, **sub_kwargs)
+
+                        result = left
+                        global_offset = left.global_offset
                     else:
+                        if not left_in_right and not right_in_left:
+                            raise ValueError("Non-in-place operations on overlapping GlobalOffsetArrays unsupported."
+                                             "Left bounds: %s, Right bounds: %s" % (left.bounds(), right.bounds()))
                         # Return a copy of the larger operand and perform in place on the sub_array of that copy
                         sample_type = type(getattr(ufunc, method)(sub_left.item(0), sub_right.item(1)))
+
                         result = larger.astype(sample_type)
                         sub_kwargs[OUT] = (result[smaller.bounds()])
                         sub_result = getattr(ufunc, method)(*sub_inputs, **sub_kwargs)
                         result[smaller.bounds()] = sub_result
 
-                        return result
+                        global_offset = larger.global_offset
 
             elif left_is_global_offset_array:
                 global_offset = left.global_offset
@@ -221,7 +233,8 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
         if in_place:
             kwargs[OUT] = tuple(o.view(np.ndarray) if isinstance(o, GlobalOffsetArray) else o for o in kwargs[OUT])
 
-        result = getattr(ufunc, method)(*inputs, **kwargs)
+        if result is None:
+            result = getattr(ufunc, method)(*inputs, **kwargs)
 
         if type(result) is tuple:
             # multiple return values

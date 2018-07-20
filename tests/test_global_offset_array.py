@@ -48,6 +48,21 @@ IN_PLACE_OPERATORS = {
 }
 
 
+def no_wrap_slices(slices):
+    """
+    Prevent wrapping around index for array indexing (only fixes the start of the slice because negative indices wrap)
+    """
+    def normalize_slice(val):
+        if not isinstance(val, slice):
+            return 0 if val < 0 else val
+        else:
+            return slice(
+                None if val.start is None else 0 if val.start < 0 else val.start,
+                None if val.stop is None else 0 if val.stop < 0 else val.stop
+            )
+    return tuple(normalize_slice(s) for s in slices)
+
+
 class TestGlobalOffsetArray:
 
     def recurse_compare(self, left_array, right_array, shape, index=(), dimension=0):
@@ -87,6 +102,28 @@ class TestGlobalOffsetArray:
         else:
             for i in range(0, shape[dimension]):
                 self.recurse_compare(left_array, right_array, shape, index + (i,), dimension + 1)
+
+    def test_no_wrap(self):
+        """
+        Make sure index ranges before start does not perform wrap around
+        """
+
+        def test_recurse_slices(expected, actual, index, shape, slices):
+            if index == len(shape):
+                normalized_slices = no_wrap_slices(slices)
+                assert np.array_equal(expected[normalized_slices], actual[slices]), \
+                    'Incorrect value found requested slices: %s, normalized slices: %s, actual: %s, expected: %s' % (
+                        slices, normalized_slices, actual[slices], expected[normalized_slices])
+
+            else:
+                dim = shape[index]
+                for start in range(-dim, dim):
+                    for stop in range(start, dim * 2):
+                        test_recurse_slices(expected, actual, index + 1, shape, (slices + (slice(start, stop),)))
+
+        for test_array in TEST_ARRAYS:
+            offset_array = GlobalOffsetArray(test_array)
+            test_recurse_slices(test_array, offset_array, 0, offset_array.shape, ())
 
     def test_get_no_offset(self):
         """
@@ -180,7 +217,7 @@ class TestGlobalOffsetArray:
             expected_exception = None
             expected_value = None
             try:
-                expected_value = original[slices]
+                expected_value = original[no_wrap_slices(slices)]
             except Exception as e:
                 expected_exception = e
 
@@ -382,141 +419,227 @@ class TestGlobalOffsetArray:
                 with pytest.raises(error.__class__, match=str(error).replace('(', '\\(').replace(')', '\\)')):
                     op(left_offset, right_offset)
 
-    def test_operator_same_size_global_offset_array(self):
+    def test_standard_operators(self):
         """
-        Test that when using operators on two GlobalOffsetArray it works only when they have the same global_offset
-        """
-        ndim = 5
-        length = 4
+        Tests that standard operators will only work when:
+            * global offset and size are same for both operands
+            * one operand is fully encapsulated by another (returns a copy of the larger with the smaller added)
 
-        for op in STANDARD_OPERATORS | IN_PLACE_OPERATORS:
-            for forward in [True, False]:
-                (original, offset_array) = self.generate_data(ndim, length)
-                operate_param = GlobalOffsetArray(np.ones(offset_array.shape, dtype=offset_array.dtype) * 10,
-                                                  global_offset=offset_array.global_offset)
-                # itrue div requires floats when doing true division (can't do in place conversion to float)
-                if op == operator.itruediv:
-                    original = original.astype(np.float64)
-                    offset_array = offset_array.astype(np.float64)
-                    operate_param = operate_param.astype(np.float64)
-
-                # Make sure to compare expected results as a ndarray because operate_param is a GlobalOffsetArray.
-                if forward:
-                    left_expected = original.view(np.ndarray)
-                    right_expected = operate_param.view(np.ndarray)
-                    left_offset = offset_array
-                    right_offset = operate_param
-                else:
-                    # test operation commutativity
-                    left_expected = operate_param.view(np.ndarray)
-                    right_expected = original.view(np.ndarray)
-                    left_offset = operate_param
-                    right_offset = offset_array
-
-                expected_result = op(left_expected, right_expected)
-                actual_result = op(left_offset, right_offset)
-
-                if op in STANDARD_OPERATORS:
-                    expected = expected_result
-                    actual = actual_result
-                else:
-                    expected = original
-                    actual = offset_array
-
-                # ensure global_offset is preserved
-                assert actual.global_offset == offset_array.global_offset
-
-                # ensure actual results match that of a regular ndarray
-                assert np.array_equal(actual, expected)
-
-                # ensure the results that are returned are a copy of an array instead of a view just like ndarray
-                expected[tuple([0] * ndim)] = 1337
-                actual[actual.global_offset] = 1337
-
-                # original arrays were not modified
-                assert np.any(offset_array == 1337) == np.any(original == 1337)
-
-                # Try testing with the operate param with a different global_offset
-                operate_param.global_offset = tuple([1337] * ndim)
-                with pytest.raises(ValueError):
-                    op(left_offset, right_offset)
-
-                # Try testing with the operate param with a partially overlapping data
-                operate_param.global_offset = tuple(floor(size/2) + offset for size, offset in
-                                                    zip(offset_array.shape, offset_array.global_offset))
-                with pytest.raises(ValueError):
-                    op(left_offset, right_offset)
-
-    def test_operator_diff_size_global_offset_array(self):
-        """
-        Test to make sure operators return a copy of the original array
+        All other cases should throw errors
         """
         ndim = 5
         length = 4
 
-        for op in STANDARD_OPERATORS | IN_PLACE_OPERATORS:
+        all_slices = (slice(None, None),) * ndim
+        # test all operators
+        for op in STANDARD_OPERATORS:
+            # test operation commutativity
             for forward in [True, False]:
-                (original, offset_array) = self.generate_data(ndim, length)
-                half_size = tuple(floor(size/2) for size in offset_array.shape)
-                offset = tuple(half_size[dimension] + offset for dimension, offset in
-                               enumerate(offset_array.global_offset))
-                half_slice = tuple(slice(s, s + s) for s in half_size)
-                operate_param = GlobalOffsetArray(np.ones(half_size, dtype=offset_array.dtype) * 255,
-                                                  global_offset=offset)
-                # itrue div requires floats when doing true division (can't do in place conversion to float)
+                (original, fixed_operand_template) = self.generate_data(ndim, length)
+                # test different sizes
+                for shape in [fixed_operand_template.shape, tuple(s * 2 for s in fixed_operand_template.shape),
+                              tuple(s // 2 + 1 for s in fixed_operand_template.shape)]:
+                    # test different overlap offsets
+                    for offset_of_offset in [-2, 0, 2, 100]:
+                        fixed_operand = fixed_operand_template.copy()
+                        # offset array used as other operand for operator
+                        offsetted_operand = GlobalOffsetArray(
+                            np.arange(np.prod(shape), dtype=fixed_operand.dtype).reshape(shape) * 10 + 1,
+                            global_offset=tuple(offset_of_offset + offset for offset in fixed_operand.global_offset)
+                        )
+
+                        expected_error = expected_result = None
+                        actual_error = actual_result = None
+
+                        fixed_in_offsetted = fixed_operand.is_contained_within(offsetted_operand)
+                        offsetted_in_fixed = offsetted_operand.is_contained_within(fixed_operand)
+
+                        # Determine the slices when one is fully encapsulated by the other
+                        fixed_slices = tuple(
+                            slice(offset_of_offset, offset_of_offset + s)
+                            for s in offsetted_operand.shape
+                        )
+                        offsetted_slices = tuple(
+                            slice(-1 * offset_of_offset, -1 * offset_of_offset + s)
+                            for s in fixed_operand.shape
+                        )
+
+                        if fixed_in_offsetted and not offsetted_in_fixed:
+                            sub_slices = offsetted_slices
+                            expected_result = offsetted_operand.view(np.ndarray).copy()
+                        elif not fixed_in_offsetted and offsetted_in_fixed:
+                            sub_slices = fixed_slices
+                            expected_result = original.view(np.ndarray).copy()
+                        else:
+                            # either exactly the same or separate slices
+                            fixed_slices = offsetted_slices = all_slices
+                            sub_slices = all_slices
+
+                        # swap operands around on forward flag
+                        if forward:
+                            left_expected = original.copy()
+                            left_actual = fixed_operand
+                            left_slices = fixed_slices
+
+                            right_expected = offsetted_operand.view(np.ndarray)
+                            right_actual = offsetted_operand
+                            right_slices = offsetted_slices
+                        else:
+                            left_expected = offsetted_operand.view(np.ndarray).copy()
+                            left_actual = offsetted_operand
+                            left_slices = offsetted_slices
+
+                            right_expected = original.view(np.ndarray)
+                            right_actual = fixed_operand
+                            right_slices = fixed_slices
+
+                        left_slices = no_wrap_slices(left_slices)
+                        right_slices = no_wrap_slices(right_slices)
+                        sub_slices = no_wrap_slices(sub_slices)
+
+                        # Condition to autofail on partial overlaps
+                        if not fixed_in_offsetted and not offsetted_in_fixed:
+                            with pytest.raises(ValueError):
+                                op(left_actual, right_actual)
+                            continue
+
+                        try:
+                            interim_result = op(left_expected[left_slices], right_expected[right_slices])
+                        except Exception as e:
+                            expected_error = e
+
+                        if expected_result is not None:
+                            expected_result = expected_result.astype(interim_result.dtype)
+                            expected_result[sub_slices] = interim_result
+                        else:
+                            expected_result = interim_result
+
+                        try:
+                            actual_result = op(left_actual, right_actual)
+                        except Exception as e:
+                            actual_error = e
+
+                        assert expected_error is None == actual_error is None, \
+                            'Expected error: (%s) Actual error: (%s)' % (expected_error, actual_error) # noqa E711
+
+                        # ensure global_offset is preserved
+                        assert hasattr(actual_result, 'global_offset')
+                        assert tuple(offset_of_offset + o for o in fixed_operand.global_offset) == actual_result.global_offset
+
+                        # ensure actual results match that of a regular ndarray
+                        assert np.array_equal(expected_result, actual_result)
+
+                        # ensure the results behave like ndarray to return a copy of the array instead of a view by
+                        # testing that the original arrays were not modified
+                        actual_result[actual_result.global_offset] = 1337
+                        assert np.all(fixed_operand != 1337)
+
+    def test_in_place_operators(self):
+        """
+        Tests that in-place operators will only work when:
+            * global offset and size are same for both operands
+            * one operand is fully encapsulated by another (returns a copy of the larger with the smaller added)
+
+        All other cases should throw errors
+        """
+        ndim = 5
+        length = 4
+
+        # test all operators
+        for op in IN_PLACE_OPERATORS:
+            # test operation commutativity
+            for forward in [True, False]:
+                (original, fixed_operand_template) = self.generate_data(ndim, length)
+
+                # in place only works with floats because we can't mix int and float into the same ndarray
                 if op == operator.itruediv:
                     original = original.astype(np.float64)
-                    offset_array = offset_array.astype(np.float64)
-                    operate_param = operate_param.astype(np.float64)
+                    fixed_operand_template = fixed_operand_template.astype(np.float64)
 
-                if forward:
-                    left_expected = original[half_slice]
-                    right_expected = operate_param.view(np.ndarray)
-                    left_offset = offset_array
-                    right_offset = operate_param
-                else:
-                    # test operation commutativity
-                    left_expected = operate_param.view(np.ndarray)
-                    right_expected = original[half_slice]
-                    left_offset = operate_param
-                    right_offset = offset_array
+                # test different sizes
+                for shape in [fixed_operand_template.shape, tuple(s * 2 for s in fixed_operand_template.shape),
+                              tuple(s // 2 + 1 for s in fixed_operand_template.shape)]:
+                    # test different overlap offsets
+                    for offset_of_offset in [-2, 0, 2, 100]:
+                        fixed_operand = fixed_operand_template.copy()
 
-                    # in place operators should only work if the left param is larger than the right
-                    if op in IN_PLACE_OPERATORS:
-                        with pytest.raises(ValueError):
-                            op(left_offset, right_offset)
-                        continue
+                        # offset array used as other operand for operator
+                        offsetted_operand = GlobalOffsetArray(
+                            np.arange(np.prod(shape), dtype=fixed_operand.dtype).reshape(shape) * 10 + 1,
+                            global_offset=tuple(offset_of_offset + offset for offset in fixed_operand.global_offset)
+                        )
 
-                actual_result = op(left_offset, right_offset)
+                        expected_error = expected_result = None
+                        actual_error = actual_result = None
 
-                expected_sub_array = op(left_expected, right_expected)
-                if op in STANDARD_OPERATORS:
-                    expected = original.astype(type(expected_sub_array.item(0)))
-                    actual = actual_result
-                else:
-                    # in place operations modify originals
-                    expected = original
-                    actual = offset_array
+                        fixed_in_offsetted = fixed_operand.is_contained_within(offsetted_operand)
+                        offsetted_in_fixed = offsetted_operand.is_contained_within(fixed_operand)
 
-                # Simulate expected
-                expected[half_slice] = expected_sub_array
+                        fixed_slices = tuple(
+                            slice(offset_of_offset, offset_of_offset + s)
+                            for s in offsetted_operand.shape
+                        )
+                        offsetted_slices = tuple(
+                            slice(-1 * offset_of_offset, -1 * offset_of_offset + s)
+                            for s in fixed_operand.shape
+                        )
 
-                # ensure global_offset is preserved
-                assert actual.global_offset == offset_array.global_offset
+                        # swap operands around on forward flag
+                        if forward:
+                            left_expected = original.copy()
+                            left_actual = fixed_operand
+                            left_slices = fixed_slices
 
-                assert np.array_equal(actual, expected)
+                            right_expected = offsetted_operand.view(np.ndarray)
+                            right_actual = offsetted_operand
+                            right_slices = offsetted_slices
 
-                # ensure the results that are returned are a copy of an array instead of a view just like ndarray
-                expected[tuple([0] * ndim)] = 1337
-                actual[actual.global_offset] = 1337
+                            sub_slices = fixed_slices
+                        else:
+                            left_expected = offsetted_operand.view(np.ndarray).copy()
+                            left_actual = offsetted_operand
+                            left_slices = offsetted_slices
 
-                # original arrays were not modified
-                assert np.any(original == 1337) == np.any(offset_array == 1337)
+                            right_expected = original.view(np.ndarray)
+                            right_actual = fixed_operand
+                            right_slices = fixed_slices
 
-                # Fail on partial overlap
-                with pytest.raises(ValueError):
-                    operate_param.global_offset = tuple(floor(size/2) + floor(size/4) for size in offset_array.shape)
-                    op(left_offset, right_offset)
+                            sub_slices = offsetted_slices
+
+                        expected_result = left_expected
+
+                        left_slices = no_wrap_slices(left_slices)
+                        right_slices = no_wrap_slices(right_slices)
+                        sub_slices = no_wrap_slices(sub_slices)
+
+                        # Condition to autofail on disjoint
+                        if not fixed_in_offsetted and not offsetted_in_fixed and shape[0] > length * 2:
+                            with pytest.raises(ValueError):
+                                op(left_actual, right_actual)
+                            continue
+
+                        interim_result = op(left_expected[left_slices], right_expected[right_slices])
+                        expected_result = expected_result.astype(interim_result.dtype)
+                        expected_result[sub_slices] = interim_result
+
+                        try:
+                            actual_result = op(left_actual, right_actual)
+                        except Exception as e:
+                            actual_error = e
+
+                        assert expected_error is None == actual_error is None, \
+                            'Expected error: (%s) Actual error: (%s)' % (expected_error, actual_error) # noqa E711
+
+                        # ensure global_offset is preserved
+                        assert hasattr(actual_result, 'global_offset')
+                        assert left_actual.global_offset == actual_result.global_offset
+
+                        # ensure actual results match that of a regular ndarray
+                        assert np.array_equal(expected_result, actual_result)
+
+                        # ensure that in place modifies the actual result
+                        actual_result[actual_result.global_offset] = 1337
+                        assert 1337 == left_actual[actual_result.global_offset]
 
     def test_aggregate_function(self):
         for test_array in TEST_ARRAYS:
@@ -562,3 +685,5 @@ class TestGlobalOffsetArray:
         assert global_offset_data.data is not unpickled
         assert global_offset == unpickled.global_offset
         assert np.array_equal(global_offset_data.data, unpickled.data)
+
+# pylama:ignore=C901

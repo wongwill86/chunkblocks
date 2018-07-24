@@ -32,14 +32,30 @@ class Chunk(object):
     def __init__(self, block, unit_index):
         self.unit_index = unit_index
         self.slices = block.unit_index_to_slices(unit_index)
-        self.offset = [s.start for s in self.slices]
+        self.offset = tuple(s.start for s in self.slices)
         self.data = None
         self.shape = block.chunk_shape
         self.overlap = block.overlap
         self.all_borders = all_borders(len(self.shape))
 
+    def squeeze_slices(self, slices):
+        """
+        Ensure that the slices match the maximum permissible bounds of this particular chunk.
+        Used for datasources that are unable to pad or handle out of bounds arrays properly
+        """
+        return tuple(
+            slice(
+                None if sl.start is None else sl.start if sl.start > bounds.start else bounds.start,
+                None if sl.stop is None else sl.stop if sl.stop < bounds.stop else bounds.stop,
+            )
+            for bounds, sl in zip(self.data.bounds(), slices)
+        )
+
     def match_datasource_dimensions(self, datasource, slices):
-        return (slice(None),) * (len(datasource.shape) - len(slices)) + slices
+        matched_slices = (slice(None),) * (len(datasource.shape) - len(slices)) + slices
+        if self.data is not None:
+            matched_slices = self.squeeze_slices(matched_slices)
+        return matched_slices
 
     def load_data(self, datasource, slices=None):
         if slices is None:
@@ -161,7 +177,7 @@ class Block(object):
 
         self.overlap = overlap
 
-        self.chunk_shape = chunk_shape
+        self.chunk_shape = tuple(chunk_shape)
 
         if not base_iterator:
             base_iterator = UnitBFSIterator()
@@ -177,7 +193,7 @@ class Block(object):
 
         if contains_bounds:
             self.offset = tuple(s.start for s in bounds)
-            self.bounds = bounds
+            self.bounds = tuple(bounds)
             self.shape = tuple(b.stop - b.start for b in self.bounds)
             self.num_chunks = tuple((shp - olap) // s for shp, olap, s in zip(
                 self.shape, self.overlap, self.strides))

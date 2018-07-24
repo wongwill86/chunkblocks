@@ -1,8 +1,11 @@
+import cProfile
 import operator
 import pickle
+import time
 from math import factorial, floor
 
 import numpy as np
+import pyprof2calltree
 import pytest
 
 from chunkblocks.global_offset_array import GlobalOffsetArray
@@ -685,5 +688,32 @@ class TestGlobalOffsetArray:
         assert global_offset_data.data is not unpickled
         assert global_offset == unpickled.global_offset
         assert np.array_equal(global_offset_data.data, unpickled.data)
+
+    def test_bench_bounds(self):
+        should_profile = False
+        dim = 5
+        length = 5
+
+        trials = 10000
+        global_offsets = np.random.randint(0, 100, size=(trials * 2, dim))
+
+        def get(i):
+            return GlobalOffsetArray(np.zeros((length,) * dim), global_offset=global_offsets[i])
+
+        start = time.time()
+        if should_profile:
+            profile = cProfile.Profile()
+            profile.enable()
+
+        for i in range(0, trials):
+            a = get(i)
+            b = get(i + 1)
+            a += b
+
+        if should_profile:
+            profile.disable()
+            pyprof2calltree.visualize(profile.getstats())
+
+        print('elapsed ', time.time() - start)
 
 # pylama:ignore=C901

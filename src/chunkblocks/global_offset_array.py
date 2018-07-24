@@ -16,7 +16,7 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
     """# noqa
     _HANDLED_TYPES = (np.ndarray, numbers.Number)
 
-    def __new__(cls, input_array, global_offset=None):
+    def __new__(cls, input_array, global_offset=None, *args, **kwargs):
         if not isinstance(input_array, np.ndarray):
             return input_array
 
@@ -25,10 +25,11 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
             global_offset = tuple([0] * input_array.ndim)
 
         obj.global_offset = tuple(global_offset)
-
         if len(global_offset) != len(input_array.shape):
             raise ValueError("Global offset %s does not have same number dimensions as input_array shape %s" % (
                 global_offset, input_array.shape))
+        obj._bounds = None
+        # obj._bounds = obj.calculate_bounds()
 
         return obj
 
@@ -36,6 +37,7 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
         if obj is None:
             return
         self.global_offset = getattr(obj, 'global_offset', None)
+        self._bounds = getattr(obj, '_bounds', None)
 
     def __reduce__(self):
         reduction = super().__reduce__()
@@ -45,6 +47,7 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
 
     def __setstate__(self, state):
         self.global_offset = state[-1]
+        # self._bounds = state[-2]
         super().__setstate__(state[:-1])
 
     def _to_internal_slices(self, index):
@@ -68,27 +71,28 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
             if item is None:
                 new_item = None
                 # don't need to keep track of global offset for collapsed index
-            elif isinstance(item, slice):
-                start = item.start
-                stop = item.stop
-                if start is None:
-                    start = offset
-                if stop is None:
-                    stop = offset + length
-
-                slice_start = start - offset
-                slice_stop = stop - offset
-
-                new_item = slice(slice_start if slice_start > 0 else 0, slice_stop if slice_stop > 0 else 0, item.step)
-                new_global_offsets += (new_item.start + offset,)
             else:
-                new_item = item - offset
-                # don't need to keep track of global offset for collapsed index
+                try:
+                    start = item.start
+                    stop = item.stop
+                    if start is None:
+                        start = offset
+                    if stop is None:
+                        stop = offset + length
 
-                if new_item < 0 or new_item > length:
-                    raise IndexError('Index %s is out of bounds for axis %s with bounds [%s , %s) '
-                                     'requested: %s bounds: %s' % (
-                                         new_item, dimension, offset, offset + length, index, self.bounds()))
+                    slice_start = start - offset
+                    slice_stop = stop - offset
+
+                    new_item = slice(slice_start if slice_start > 0 else 0, slice_stop if slice_stop > 0 else 0, item.step)
+                    new_global_offsets += (new_item.start + offset,)
+                except AttributeError:  # Not a slice
+                    new_item = item - offset
+                    # don't need to keep track of global offset for collapsed index
+
+                    if new_item < 0 or new_item > length:
+                        raise IndexError('Index %s is out of bounds for axis %s with bounds [%s , %s) '
+                                         'requested: %s bounds: %s' % (
+                                             new_item, dimension, offset, offset + length, index, self.bounds))
 
             internal_index += (new_item,)
         return (internal_index, new_global_offsets)
@@ -103,6 +107,9 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
         new_from_template = super(GlobalOffsetArray, self).__getitem__(internal_index)
         if hasattr(new_from_template, 'global_offset'):
             new_from_template.global_offset = new_global_offset
+            if new_from_template.shape != self.shape or self.global_offset != new_global_offset:
+                new_from_template._bounds = new_from_template.calculate_bounds()
+
         return new_from_template
 
     def __setitem__(self, index, value):
@@ -136,8 +143,12 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
         """
         Get slices that are bounds of the available data
         """
-        return tuple(slice(offset, offset + self.shape[dimension]) for dimension, offset in
-                     enumerate(self.global_offset))
+        if self._bounds is None:
+            self._bounds = self.calculate_bounds()
+        return self._bounds
+
+    def calculate_bounds(self):
+        return tuple(slice(offset, offset + shape) for shape, offset in zip(self.shape, self.global_offset))
 
     def is_contained_within(self, other):
         """
@@ -148,9 +159,9 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
 
         self_bounds = self.bounds()
         other_bounds = other.bounds()
-        return all(other_slice.start <= self_slice.start and self_slice.start <= other_slice.stop and
-                   other_slice.start <= self_slice.stop and self_slice.stop <= other_slice.stop
-                   for self_slice, other_slice in zip(self_bounds, other_bounds))
+        return not any(other_slice.start > self_slice.start or self_slice.start > other_slice.stop or
+                       other_slice.start > self_slice.stop or self_slice.stop > other_slice.stop
+                       for self_slice, other_slice in zip(self_bounds, other_bounds))
 
     def __array_ufunc__(self, ufunc, method, *inputs, **kwargs): # noqa: C901
         """
@@ -179,9 +190,7 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
             left = inputs[0]
             right = inputs[1]
 
-            left_is_global_offset_array = isinstance(left, GlobalOffsetArray)
-            right_is_global_offset_array = isinstance(right, GlobalOffsetArray)
-            if left_is_global_offset_array and right_is_global_offset_array:
+            try:
                 smaller = larger = None
                 left_in_right = left.is_contained_within(right)
                 right_in_left = right.is_contained_within(left)
@@ -201,7 +210,7 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
 
                     if in_place:
                         # only perform op if there are values to operate on
-                        if len(sub_left) and len(sub_right):
+                        if sub_left.size and sub_right.size:
                             sub_kwargs[OUT] = tuple(o[right.bounds()] for o in kwargs[OUT])
                             getattr(ufunc, method)(*sub_inputs, **sub_kwargs)
 
@@ -220,11 +229,11 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
                         result[smaller.bounds()] = sub_result
 
                         global_offset = larger.global_offset
-
-            elif left_is_global_offset_array:
-                global_offset = left.global_offset
-            elif right_is_global_offset_array:
-                global_offset = right.global_offset
+            except AttributeError:  # At least one of arguments is not a GlobalOffsetArray
+                try:
+                    global_offset = left.global_offset
+                except AttributeError:  # Left is not a GlobalOffsetArray
+                    global_offset = right.global_offset
 
             inputs = (left, right)
 

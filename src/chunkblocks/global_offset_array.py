@@ -154,9 +154,6 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
         """
         Check to see if this volume is contained within other
         """
-        if self.ndim != other.ndim:
-            raise ValueError("Checking with incompatible dimensions. self: %s, other: %s" % (self.shape, other.shape))
-
         self_bounds = self.bounds()
         other_bounds = other.bounds()
         return not any(other_slice.start > self_slice.start or self_slice.start > other_slice.stop or
@@ -218,7 +215,7 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
                         global_offset = left.global_offset
                     else:
                         if not left_in_right and not right_in_left:
-                            raise ValueError("Non-in-place operations on overlapping GlobalOffsetArrays unsupported."
+                            raise ValueError("Non-in-place operations on overlapping GlobalOffsetArrays unsupported. "
                                              "Left bounds: %s, Right bounds: %s" % (left.bounds(), right.bounds()))
                         # Return a copy of the larger operand and perform in place on the sub_array of that copy
                         sample_type = type(getattr(ufunc, method)(sub_left.item(0), sub_right.item(1)))

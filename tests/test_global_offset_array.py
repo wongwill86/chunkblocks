@@ -689,6 +689,31 @@ class TestGlobalOffsetArray:
         assert global_offset == unpickled.global_offset
         assert np.array_equal(global_offset_data.data, unpickled.data)
 
+    def test_broadcast(self):
+        larger = GlobalOffsetArray(np.array(tuple(np.ones((3, 3)) * i for i in range(1, 4))))
+        smaller = np.ones((3, 3)) * 2
+
+        result = larger * smaller
+
+        assert np.all(result[0] == 2)
+        assert np.all(result[1] == 4)
+        assert np.all(result[2] == 6)
+
+        result = smaller * larger
+
+        assert np.all(result[0] == 2)
+        assert np.all(result[1] == 4)
+        assert np.all(result[2] == 6)
+
+        larger *= smaller
+
+        assert np.all(larger[0] == 2)
+        assert np.all(larger[1] == 4)
+        assert np.all(larger[2] == 6)
+
+        with pytest.raises(ValueError):
+            smaller *= larger
+
     def test_bench_bounds(self):
         should_profile = False
         dim = 5

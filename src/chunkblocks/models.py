@@ -3,6 +3,8 @@ from datetime import datetime
 from functools import lru_cache, partial
 from threading import current_thread
 
+import numpy as np
+
 from chunkblocks.iterators import UnitBFSIterator
 
 
@@ -216,7 +218,7 @@ class Block(object):
         self.bounds = bounds
         Block.verify_size(self.num_chunks, self.chunk_shape, self.shape, self.overlap)
 
-        self.checkpoints = set()
+        self.checkpoints = []
         self.unit_index_to_chunk = partial(Chunk, self)
 
     def unit_index_to_slices(self, index):
@@ -233,18 +235,26 @@ class Block(object):
                 raise ValueError('Data size %s divided by %s with overlap %s does not divide evenly' % (
                     shape, chunk_shape, overlap))
 
-    def checkpoint(self, chunk):
-        self.checkpoints.add(chunk.unit_index)
+    def ensure_checkpoint_stage(self, stage):
+        try:
+            return self.checkpoints[stage]
+        except IndexError:
+            self.checkpoints.append(np.zeros(self.num_chunks, dtype=np.bool))
+            return self.checkpoints[stage]
+
+    def checkpoint(self, chunk, stage=0):
+        self.ensure_checkpoint_stage(stage)[chunk.unit_index] = True
 
     def get_all_neighbors(self, chunk):
         return map(self.unit_index_to_chunk,
                    self.base_iterator.get_all_neighbors(chunk.unit_index, max=self.num_chunks))
 
-    def is_checkpointed(self, chunk):
-        return chunk.unit_index in self.checkpoints
+    def is_checkpointed(self, chunk, stage=0):
+        return self.ensure_checkpoint_stage(stage)[chunk.unit_index]
 
-    def all_neighbors_checkpointed(self, chunk):
-        return all(neighbor.unit_index in self.checkpoints for neighbor in self.get_all_neighbors(chunk))
+    def all_neighbors_checkpointed(self, chunk, stage=0):
+        return all(self.ensure_checkpoint_stage(stage)[neighbor.unit_index] for neighbor in self.get_all_neighbors(
+            chunk))
 
     def chunk_iterator(self, start=None):
         if start is None:

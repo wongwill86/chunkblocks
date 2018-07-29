@@ -194,3 +194,28 @@ class TestBlock:
                 fake_data[edge_slice] += 1
             fake_data[block.core_slices(chunk)] += 1
         assert fake_data.sum() == np.product(fake_data.shape)
+
+    def test_checkpoints(self):
+        bounds = (slice(0, 7), slice(0, 7), slice(0, 7))
+        chunk_shape = (3, 3, 3)
+        overlap = (1, 1, 1)
+
+        block = Block(bounds=bounds, chunk_shape=chunk_shape, overlap=overlap)
+
+        for chunk in block.chunk_iterator((1, 0, 1)):
+            block.checkpoint(chunk)
+            assert block.is_checkpointed(chunk)
+            assert block.is_checkpointed(chunk, stage=0)
+
+        for chunk in block.chunk_iterator((1, 0, 1)):
+            assert not block.is_checkpointed(chunk, stage=1)
+            assert not block.checkpoint(chunk, stage=1)
+            assert block.all_neighbors_checkpointed(chunk, stage=0)
+            block.checkpoint(chunk, stage=1)
+
+        stage = 0
+        for chunk in block.chunk_iterator((1, 0, 1)):
+            print(block.checkpoints[stage][chunk.unit_index])
+            for c in block.get_all_neighbors(chunk):
+                print(c.unit_index, block.checkpoints[stage][c.unit_index])
+            assert block.all_neighbors_checkpointed(chunk, stage=0)

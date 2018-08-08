@@ -29,11 +29,14 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
             raise ValueError("Global offset %s does not have same number dimensions as input_array shape %s" % (
                 global_offset, input_array.shape))
         obj._bounds = None
-        # obj._bounds = obj.calculate_bounds()
 
         return obj
 
     def __array_finalize__(self, obj):
+        """
+        Called whenever the array is new-ed. Because unpickling does NOT call __array_finalize__,
+        make sure they are equivalent
+        """
         if obj is None:
             return
         self.global_offset = getattr(obj, 'global_offset', None)
@@ -46,8 +49,11 @@ class GlobalOffsetArray(np.ndarray, NDArrayOperatorsMixin):
         return tuple(object_state if index is 2 else r for index, r in enumerate(reduction))
 
     def __setstate__(self, state):
+        """
+        Called when unpickling. Because unpickling does NOT call __array_finalize__, make sure they are equivalent
+        """
         self.global_offset = state[-1]
-        # self._bounds = state[-2]
+        self._bounds = None
         super().__setstate__(state[:-1])
 
     def _to_internal_slices(self, index):

@@ -219,3 +219,48 @@ class TestBlock:
             for c in block.get_all_neighbors(chunk):
                 print(c.unit_index, block.checkpoints[stage][c.unit_index])
             assert block.all_neighbors_checkpointed(chunk, stage=0)
+
+    def test_other(self):
+        bounds_1 = (slice(0, 16), slice(0, 16), slice(0, 16))
+        chunk_shape_1 = (4, 4, 4)
+        overlap_1 = (1, 1, 1)
+        block_1 = Block(bounds=bounds_1, chunk_shape=chunk_shape_1, overlap=overlap_1)
+
+        bounds_2 = (slice(-1, 25), slice(-1, 25), slice(-1, 25))
+        chunk_shape_2 = (6, 6, 6)
+        overlap_2 = (1, 1, 1)
+        block_2 = Block(bounds=bounds_2, chunk_shape=chunk_shape_2, overlap=overlap_2)
+
+        index = 1
+        for unit_index in range(0, block_2.num_chunks[index]):
+            chunk_2 = Chunk(block_2, (0, unit_index))
+            chunk_2_coords = set(filter(lambda x: x >= block_1.bounds[index].start and x < block_1.bounds[index].stop,
+                                        range(chunk_2.slices[index].start, chunk_2.slices[index].stop)))
+            print('expect:', chunk_2.slices, chunk_2_coords)
+            for unit_index in block_1.get_corresponding_unit_indices(block_2, chunk_2):
+                chunk_1 = Chunk(block_1, unit_index)
+                chunk_1_coords = set(filter(lambda x: x >= block_1.bounds[index].start and x < block_1.bounds[index].stop,
+                                            range(chunk_1.slices[index].start, chunk_1.slices[index].stop)))
+                print(chunk_1.slices, chunk_1_coords)
+                chunk_2_coords.difference_update(chunk_1_coords)
+            print('left', chunk_2_coords)
+            assert len(chunk_2_coords) == 0
+
+        block_2_temp = block_2
+        block_2 = block_1
+        block_1 = block_2_temp
+
+        index = 1
+        for unit_index in range(0, block_2.num_chunks[index]):
+            chunk_2 = Chunk(block_2, (0, unit_index))
+            chunk_2_coords = set(filter(lambda x: x >= block_1.bounds[index].start and x < block_1.bounds[index].stop,
+                                        range(chunk_2.slices[index].start, chunk_2.slices[index].stop)))
+            print('expect:', chunk_2.slices, chunk_2_coords)
+            for unit_index in block_1.get_corresponding_unit_indices(block_2, chunk_2):
+                chunk_1 = Chunk(block_1, unit_index)
+                chunk_1_coords = set(filter(lambda x: x >= block_1.bounds[index].start and x < block_1.bounds[index].stop,
+                                            range(chunk_1.slices[index].start, chunk_1.slices[index].stop)))
+                print(chunk_1.slices, chunk_1_coords)
+                chunk_2_coords.difference_update(chunk_1_coords)
+            print('left', chunk_2_coords)
+            assert len(chunk_2_coords) == 0

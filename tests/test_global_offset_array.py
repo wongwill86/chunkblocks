@@ -681,6 +681,7 @@ class TestGlobalOffsetArray:
         data = np.arange(0, np.product(dimensions)).reshape(dimensions)
         global_offset = (3, 2, 1, 0)
         global_offset_data = GlobalOffsetArray(data, global_offset=global_offset)
+        bounds = global_offset_data.bounds()
 
         pickled = pickle.dumps(global_offset_data)
         unpickled = pickle.loads(pickled)
@@ -688,6 +689,7 @@ class TestGlobalOffsetArray:
         assert global_offset_data.data is not unpickled
         assert global_offset == unpickled.global_offset
         assert np.array_equal(global_offset_data.data, unpickled.data)
+        assert bounds == unpickled.bounds()
 
     def test_broadcast(self):
         larger = GlobalOffsetArray(np.array(tuple(np.ones((3, 3)) * i for i in range(1, 4))))

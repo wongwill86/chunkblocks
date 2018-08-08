@@ -1,4 +1,5 @@
 import itertools
+import math
 from datetime import datetime
 from functools import lru_cache, partial
 from threading import current_thread
@@ -39,6 +40,7 @@ class Chunk(object):
         self.shape = block.chunk_shape
         self.overlap = block.overlap
         self.all_borders = all_borders(len(self.shape))
+        self.block = block
 
     def squeeze_slices(self, slices):
         """
@@ -365,3 +367,11 @@ class Block(object):
                 for overlapped_slice in chunk.border_slices(borders)
             ] if all(s.stop != s.start for s in slices)
         ]
+
+    def get_corresponding_unit_indices(self, other_block, other_chunk):
+        assert other_chunk.block == other_block
+        return itertools.product(
+            *[range((sl.start - b.start) // s if sl.start > b.start else 0,
+                    math.ceil((sl.stop - b.start) / s) if sl.stop < b.stop else chunks)
+              for b, s, chunks, sl in zip(self.bounds, self.strides, self.num_chunks, other_chunk.slices)]
+        )

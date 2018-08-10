@@ -227,8 +227,31 @@ class Block(object):
         return tuple(slice(b.start + idx * s, b.start + idx * s + c_shape) for b, idx, s, c_shape in zip(
             self.bounds, index, self.strides, self.chunk_shape))
 
-    def slices_to_unit_index(self, slices):
+    def chunk_slices_to_unit_index(self, slices):
+        """
+        Get the corresponding chunk index for this chunk_slice
+        """
+        # remove dimension for channel
+        slices = slices[-len(self.chunk_shape):]
         return tuple((slice.start - b.start) // s for b, s, slice in zip(self.bounds, self.strides, slices))
+
+    def slices_to_unit_indices(self, slices):
+        """
+        Get the corresponding unit indices that cover these slices
+        """
+        # remove dimension for channel
+        slices = slices[-len(self.chunk_shape):]
+        return itertools.product(
+            *[range(0 if sl.start is None or sl.start < b.start else (sl.start - b.start) // s,
+                    chunks if sl.stop is None or sl.stop > b.stop else math.ceil((sl.stop - b.start) / s))
+              for b, s, chunks, sl in zip(self.bounds, self.strides, self.num_chunks, slices)]
+        )
+
+    def slices_to_chunks(self, slices):
+        """
+        Get the corresponding chunks that cover these slices
+        """
+        return map(self.unit_index_to_chunk, self.slices_to_unit_indices(slices))
 
     @staticmethod
     def verify_size(num_chunks, chunk_shape, shape, overlap):
@@ -255,8 +278,11 @@ class Block(object):
         return self.ensure_checkpoint_stage(stage)[chunk.unit_index]
 
     def all_neighbors_checkpointed(self, chunk, stage=0):
-        return all(self.ensure_checkpoint_stage(stage)[neighbor.unit_index] for neighbor in self.get_all_neighbors(
-            chunk))
+        return self.all_checkpointed(self.get_all_neighbors(chunk), stage)
+
+    def all_checkpointed(self, chunks, stage=0):
+        checkpoints = self.ensure_checkpoint_stage(stage)
+        return all(checkpoints[chunk.unit_index] for chunk in chunks)
 
     def chunk_iterator(self, start=None):
         if start is None:
@@ -367,11 +393,3 @@ class Block(object):
                 for overlapped_slice in chunk.border_slices(borders)
             ] if all(s.stop != s.start for s in slices)
         ]
-
-    def get_corresponding_unit_indices(self, other_block, other_chunk):
-        assert other_chunk.block == other_block
-        return itertools.product(
-            *[range((sl.start - b.start) // s if sl.start > b.start else 0,
-                    math.ceil((sl.stop - b.start) / s) if sl.stop < b.stop else chunks)
-              for b, s, chunks, sl in zip(self.bounds, self.strides, self.num_chunks, other_chunk.slices)]
-        )

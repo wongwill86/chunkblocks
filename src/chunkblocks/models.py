@@ -242,9 +242,16 @@ class Block(object):
         # remove dimension for channel
         slices = slices[-len(self.chunk_shape):]
         return itertools.product(
-            *[range(0 if sl.start is None or sl.start < b.start else (sl.start - b.start) // s,
-                    chunks if sl.stop is None or sl.stop > b.stop else math.ceil((sl.stop - b.start) / s))
-              for b, s, chunks, sl in zip(self.bounds, self.strides, self.num_chunks, slices)]
+            *[
+                range(
+                    # set start 0 if slice begins in first overlap area to prevent negative index
+                    # otherwise take floor div for the number of strides from bound start - offset of overlap
+                    0 if sl.start is None or sl.start < b.start + o else (sl.start - b.start - o) // s,
+                    # set end to chunks if slice ends in the last overlap area to prevent index  > chunks
+                    # otherwise take ceil div for the number of strides from start (no offset needed)
+                    chunks if sl.stop is None or sl.stop >= b.stop - o else math.ceil((sl.stop - b.start) / s)
+                ) for b, s, chunks, sl, o in zip(self.bounds, self.strides, self.num_chunks, slices, self.overlap)
+            ]
         )
 
     def slices_to_chunks(self, slices):

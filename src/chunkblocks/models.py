@@ -1,7 +1,10 @@
 import itertools
+import math
 from datetime import datetime
 from functools import lru_cache, partial
 from threading import current_thread
+
+import numpy as np
 
 from chunkblocks.iterators import UnitBFSIterator
 
@@ -37,6 +40,7 @@ class Chunk(object):
         self.shape = block.chunk_shape
         self.overlap = block.overlap
         self.all_borders = all_borders(len(self.shape))
+        self.block = block
 
     def squeeze_slices(self, slices):
         """
@@ -216,15 +220,45 @@ class Block(object):
         self.bounds = bounds
         Block.verify_size(self.num_chunks, self.chunk_shape, self.shape, self.overlap)
 
-        self.checkpoints = set()
+        self.checkpoints = []
         self.unit_index_to_chunk = partial(Chunk, self)
 
     def unit_index_to_slices(self, index):
         return tuple(slice(b.start + idx * s, b.start + idx * s + c_shape) for b, idx, s, c_shape in zip(
             self.bounds, index, self.strides, self.chunk_shape))
 
-    def slices_to_unit_index(self, slices):
+    def chunk_slices_to_unit_index(self, slices):
+        """
+        Get the corresponding chunk index for this chunk_slice
+        """
+        # remove dimension for channel
+        slices = slices[-len(self.chunk_shape):]
         return tuple((slice.start - b.start) // s for b, s, slice in zip(self.bounds, self.strides, slices))
+
+    def slices_to_unit_indices(self, slices):
+        """
+        Get the corresponding unit indices that cover these slices
+        """
+        # remove dimension for channel
+        slices = slices[-len(self.chunk_shape):]
+        return itertools.product(
+            *[
+                range(
+                    # set start 0 if slice begins in first overlap area to prevent negative index
+                    # otherwise take floor div for the number of strides from bound start - offset of overlap
+                    0 if sl.start is None or sl.start < b.start + o else (sl.start - b.start - o) // s,
+                    # set end to chunks if slice ends in the last overlap area to prevent index  > chunks
+                    # otherwise take ceil div for the number of strides from start (no offset needed)
+                    chunks if sl.stop is None or sl.stop >= b.stop - o else math.ceil((sl.stop - b.start) / s)
+                ) for b, s, chunks, sl, o in zip(self.bounds, self.strides, self.num_chunks, slices, self.overlap)
+            ]
+        )
+
+    def slices_to_chunks(self, slices):
+        """
+        Get the corresponding chunks that cover these slices
+        """
+        return map(self.unit_index_to_chunk, self.slices_to_unit_indices(slices))
 
     @staticmethod
     def verify_size(num_chunks, chunk_shape, shape, overlap):
@@ -233,18 +267,29 @@ class Block(object):
                 raise ValueError('Data size %s divided by %s with overlap %s does not divide evenly' % (
                     shape, chunk_shape, overlap))
 
-    def checkpoint(self, chunk):
-        self.checkpoints.add(chunk.unit_index)
+    def ensure_checkpoint_stage(self, stage):
+        try:
+            return self.checkpoints[stage]
+        except IndexError:
+            self.checkpoints.append(np.zeros(self.num_chunks, dtype=np.bool))
+            return self.checkpoints[stage]
+
+    def checkpoint(self, chunk, stage=0):
+        self.ensure_checkpoint_stage(stage)[chunk.unit_index] = True
 
     def get_all_neighbors(self, chunk):
         return map(self.unit_index_to_chunk,
                    self.base_iterator.get_all_neighbors(chunk.unit_index, max=self.num_chunks))
 
-    def is_checkpointed(self, chunk):
-        return chunk.unit_index in self.checkpoints
+    def is_checkpointed(self, chunk, stage=0):
+        return self.ensure_checkpoint_stage(stage)[chunk.unit_index]
 
-    def all_neighbors_checkpointed(self, chunk):
-        return all(neighbor.unit_index in self.checkpoints for neighbor in self.get_all_neighbors(chunk))
+    def all_neighbors_checkpointed(self, chunk, stage=0):
+        return self.all_checkpointed(self.get_all_neighbors(chunk), stage)
+
+    def all_checkpointed(self, chunks, stage=0):
+        checkpoints = self.ensure_checkpoint_stage(stage)
+        return all(checkpoints[chunk.unit_index] for chunk in chunks)
 
     def chunk_iterator(self, start=None):
         if start is None:

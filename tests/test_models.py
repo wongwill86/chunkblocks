@@ -146,10 +146,10 @@ class TestBlock:
 
         block = Block(bounds=bounds, chunk_shape=chunk_shape, overlap=overlap)
 
-        assert block.slices_to_unit_index((slice(0, 30), slice(0, 30))) == (0, 0)
-        assert block.slices_to_unit_index((slice(0, 30), slice(20, 50))) == (0, 1)
-        assert block.slices_to_unit_index((slice(20, 50), slice(0, 30))) == (1, 0)
-        assert block.slices_to_unit_index((slice(20, 50), slice(20, 50))) == (1, 1)
+        assert block.chunk_slices_to_unit_index((slice(0, 30), slice(0, 30))) == (0, 0)
+        assert block.chunk_slices_to_unit_index((slice(0, 30), slice(20, 50))) == (0, 1)
+        assert block.chunk_slices_to_unit_index((slice(20, 50), slice(0, 30))) == (1, 0)
+        assert block.chunk_slices_to_unit_index((slice(20, 50), slice(20, 50))) == (1, 1)
 
     def test_iterator(self):
         bounds = (slice(0, 70), slice(0, 70))
@@ -194,3 +194,95 @@ class TestBlock:
                 fake_data[edge_slice] += 1
             fake_data[block.core_slices(chunk)] += 1
         assert fake_data.sum() == np.product(fake_data.shape)
+
+    def test_checkpoints(self):
+        bounds = (slice(0, 7), slice(0, 7), slice(0, 7))
+        chunk_shape = (3, 3, 3)
+        overlap = (1, 1, 1)
+
+        block = Block(bounds=bounds, chunk_shape=chunk_shape, overlap=overlap)
+
+        for chunk in block.chunk_iterator((1, 0, 1)):
+            block.checkpoint(chunk)
+            assert block.is_checkpointed(chunk)
+            assert block.is_checkpointed(chunk, stage=0)
+
+        for chunk in block.chunk_iterator((1, 0, 1)):
+            assert not block.is_checkpointed(chunk, stage=1)
+            assert not block.checkpoint(chunk, stage=1)
+            assert block.all_neighbors_checkpointed(chunk, stage=0)
+            block.checkpoint(chunk, stage=1)
+
+        stage = 0
+        for chunk in block.chunk_iterator((1, 0, 1)):
+            print(block.checkpoints[stage][chunk.unit_index])
+            for c in block.get_all_neighbors(chunk):
+                print(c.unit_index, block.checkpoints[stage][c.unit_index])
+            assert block.all_neighbors_checkpointed(chunk, stage=0)
+
+    def test_slices_to_indices(self):
+        bounds_1 = (slice(0, 16), slice(0, 16), slice(0, 16))
+        chunk_shape_1 = (4, 4, 4)
+        overlap_1 = (1, 1, 1)
+        block_1 = Block(bounds=bounds_1, chunk_shape=chunk_shape_1, overlap=overlap_1)
+
+        bounds_2 = (slice(-1, 25), slice(-1, 25), slice(-1, 25))
+        chunk_shape_2 = (6, 6, 6)
+        overlap_2 = (1, 1, 1)
+        block_2 = Block(bounds=bounds_2, chunk_shape=chunk_shape_2, overlap=overlap_2)
+
+        index = 1
+        for unit_index in range(0, block_2.num_chunks[index]):
+            chunk_2 = Chunk(block_2, (0, unit_index))
+            chunk_2_coords = set(filter(lambda x: x >= block_1.bounds[index].start and x < block_1.bounds[index].stop,
+                                        range(chunk_2.slices[index].start, chunk_2.slices[index].stop)))
+            print('expect:', chunk_2.slices, chunk_2_coords)
+            for unit_index in block_1.slices_to_unit_indices(chunk_2.slices):
+                chunk_1 = Chunk(block_1, unit_index)
+                chunk_1_coords = set(filter(lambda x: x >= block_1.bounds[index].start and x < block_1.bounds[index].stop,
+                                            range(chunk_1.slices[index].start, chunk_1.slices[index].stop)))
+                print(chunk_1.slices, chunk_1_coords)
+                chunk_2_coords.difference_update(chunk_1_coords)
+                assert all(tuple(u >= 0 and u <= n for u, n in zip(unit_index, block_1.num_chunks)))
+            print('left', chunk_2_coords)
+            assert len(chunk_2_coords) == 0
+
+        # Test reverse direction
+        block_2_temp = block_2
+        block_2 = block_1
+        block_1 = block_2_temp
+
+        index = 1
+        for unit_index in range(0, block_2.num_chunks[index]):
+            chunk_2 = Chunk(block_2, (0, unit_index))
+            chunk_2_coords = set(filter(lambda x: x >= block_1.bounds[index].start and x < block_1.bounds[index].stop,
+                                        range(chunk_2.slices[index].start, chunk_2.slices[index].stop)))
+            print('expect:', chunk_2.slices, chunk_2_coords)
+            for unit_index in block_1.slices_to_unit_indices(chunk_2.slices):
+                chunk_1 = Chunk(block_1, unit_index)
+                chunk_1_coords = set(filter(lambda x: x >= block_1.bounds[index].start and x < block_1.bounds[index].stop,
+                                            range(chunk_1.slices[index].start, chunk_1.slices[index].stop)))
+                print(chunk_1.slices, chunk_1_coords)
+                chunk_2_coords.difference_update(chunk_1_coords)
+                assert all(tuple(u >= 0 and u <= n for u, n in zip(unit_index, block_1.num_chunks)))
+            print('left', chunk_2_coords)
+            assert len(chunk_2_coords) == 0
+
+        # Test None
+        index = 1
+        for unit_index in range(0, block_2.num_chunks[index]):
+            chunk_2 = Chunk(block_2, (0, unit_index))
+            # use fake slices with None here!
+            chunk_2_slices = (slice(None, None),) + chunk_2.slices[1:]
+            chunk_2_coords = set(filter(lambda x: x >= block_1.bounds[index].start and x < block_1.bounds[index].stop,
+                                        range(chunk_2_slices[index].start, chunk_2_slices[index].stop)))
+            print('expect:', chunk_2_slices, chunk_2_coords)
+            for unit_index in block_1.slices_to_unit_indices(chunk_2_slices):
+                chunk_1 = Chunk(block_1, unit_index)
+                chunk_1_coords = set(filter(lambda x: x >= block_1.bounds[index].start and x < block_1.bounds[index].stop,
+                                            range(chunk_1.slices[index].start, chunk_1.slices[index].stop)))
+                print(chunk_1.slices, chunk_1_coords)
+                chunk_2_coords.difference_update(chunk_1_coords)
+                assert all(tuple(u >= 0 and u <= n for u, n in zip(unit_index, block_1.num_chunks)))
+            print('left', chunk_2_coords)
+            assert len(chunk_2_coords) == 0

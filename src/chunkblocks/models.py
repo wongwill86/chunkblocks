@@ -32,15 +32,22 @@ def sub(slice_left, slice_right):
 
 
 class Chunk(object):
+    __slots__ = ('unit_index', 'slices', 'offset', 'data', 'all_borders', 'block')
     def __init__(self, block, unit_index):
+        self.block = block
         self.unit_index = unit_index
         self.slices = block.unit_index_to_slices(unit_index)
         self.offset = tuple(s.start for s in self.slices)
         self.data = None
-        self.shape = block.chunk_shape
-        self.overlap = block.overlap
         self.all_borders = all_borders(len(self.shape))
-        self.block = block
+
+    @property
+    def overlap(self):
+        return self.block.overlap
+
+    @property
+    def shape(self):
+        return self.block.chunk_shape
 
     def squeeze_slices(self, slices):
         """
@@ -271,7 +278,8 @@ class Block(object):
         try:
             return self.checkpoints[stage]
         except IndexError:
-            self.checkpoints.append(np.zeros(self.num_chunks, dtype=np.bool))
+            while len(self.checkpoints) < stage + 1:
+                self.checkpoints.append(np.zeros(self.num_chunks, dtype=np.bool))
             return self.checkpoints[stage]
 
     def checkpoint(self, chunk, stage=0):

@@ -1,8 +1,6 @@
 import itertools
 import math
-from datetime import datetime
 from functools import lru_cache, partial
-from threading import current_thread
 
 import numpy as np
 
@@ -32,15 +30,23 @@ def sub(slice_left, slice_right):
 
 
 class Chunk(object):
+    __slots__ = ('unit_index', 'slices', 'offset', 'data', 'all_borders', 'block')
+
     def __init__(self, block, unit_index):
+        self.block = block
         self.unit_index = unit_index
         self.slices = block.unit_index_to_slices(unit_index)
         self.offset = tuple(s.start for s in self.slices)
         self.data = None
-        self.shape = block.chunk_shape
-        self.overlap = block.overlap
         self.all_borders = all_borders(len(self.shape))
-        self.block = block
+
+    @property
+    def overlap(self):
+        return self.block.overlap
+
+    @property
+    def shape(self):
+        return self.block.chunk_shape
 
     def squeeze_slices(self, slices):
         """
@@ -67,9 +73,6 @@ class Chunk(object):
 
         slices = self.match_datasource_dimensions(datasource, slices)
 
-        print('VVVVVV %s--%s %s loading into chunk slices %s' % (
-            datetime.now(), current_thread().name, self.unit_index, slices))
-
         if self.data is None:
             self.data = datasource[slices].copy()
         else:
@@ -83,18 +86,12 @@ class Chunk(object):
 
         slices = self.match_datasource_dimensions(datasource, slices)
 
-        print('^^^^^^ %s--%s %s dumping from chunk slices %s' % (
-            datetime.now(), current_thread().name, self.unit_index, slices))
-
         datasource[slices] = self.data[slices]
         return self
 
     def copy_data(self, source, destination, slices=None):
         if slices is None:
             slices = self.slices
-        print('>>>>>> %s--%s %s copying data, slices: %s' % (datetime.now(), current_thread().name, self.unit_index,
-                                                             slices))
-
         slices = self.match_datasource_dimensions(destination, slices)
 
         destination[slices] = source[slices]
@@ -271,7 +268,8 @@ class Block(object):
         try:
             return self.checkpoints[stage]
         except IndexError:
-            self.checkpoints.append(np.zeros(self.num_chunks, dtype=np.bool))
+            while len(self.checkpoints) < stage + 1:
+                self.checkpoints.append(np.zeros(self.num_chunks, dtype=np.bool))
             return self.checkpoints[stage]
 
     def checkpoint(self, chunk, stage=0):

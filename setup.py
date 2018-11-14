@@ -19,7 +19,7 @@ def read(*names, **kwargs):
 
 setup(
     name='chunkblocks',
-    version='0.5.0',
+    version='0.5.1',
     license='MIT license',
     description='Library to facilate chunked access of large ndarray-like volumes',
     long_description='%s\n%s' % (

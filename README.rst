@@ -36,9 +36,9 @@ Overview
     :alt: PyPI Package latest release
     :target: https://pypi.python.org/pypi/chunkblocks
 
-.. |commits-since| image:: https://img.shields.io/github/commits-since/wongwill86/chunkblocks/v0.4.0.svg
+.. |commits-since| image:: https://img.shields.io/github/commits-since/wongwill86/chunkblocks/v0.5.0.svg
     :alt: Commits since latest release
-    :target: https://github.com/wongwill86/chunkblocks/compare/v0.4.0...master
+    :target: https://github.com/wongwill86/chunkblocks/compare/v0.5.0...master
 
 .. |wheel| image:: https://img.shields.io/pypi/wheel/chunkblocks.svg
     :alt: PyPI Wheel
